@@ -5,6 +5,8 @@ using System.Linq;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
+using System.Net;
+using System.Net.Sockets;
 
 namespace LifxNet
 {
@@ -32,7 +34,7 @@ namespace LifxNet
 		public event EventHandler<DeviceDiscoveryEventArgs>? DeviceLost;
 
 		private IList<Device> devices = new List<Device>();
-		
+
 		/// <summary>
 		/// Gets a list of currently known devices
 		/// </summary>
@@ -52,13 +54,13 @@ namespace LifxNet
 
 		private void ProcessDeviceDiscoveryMessage(System.Net.IPAddress remoteAddress, int remotePort, LifxResponse msg)
 		{
-            string id = msg.Header.TargetMacAddressName; //remoteAddress.ToString()
-            if (DiscoveredBulbs.ContainsKey(id))  //already discovered
-            {
+			string id = msg.Header.TargetMacAddressName; //remoteAddress.ToString()
+			if (DiscoveredBulbs.ContainsKey(id))  //already discovered
+			{
 				DiscoveredBulbs[id].LastSeen = DateTime.UtcNow; //Update datestamp
-                DiscoveredBulbs[id].HostName = remoteAddress.ToString(); //Update hostname in case IP changed
+				DiscoveredBulbs[id].HostName = remoteAddress.ToString(); //Update hostname in case IP changed
 
-                return;
+				return;
 			}
 			if (msg.Source != discoverSourceID || //did we request the discovery?
 				_DiscoverCancellationSource == null ||
@@ -67,7 +69,7 @@ namespace LifxNet
 
 			var device = new LightBulb(remoteAddress.ToString(), msg.Header.TargetMacAddress, msg.Payload[0]
 				, BitConverter.ToUInt32(msg.Payload, 1))
-			{ 
+			{
 				LastSeen = DateTime.UtcNow
 			};
 			DiscoveredBulbs[id] = device;
@@ -92,7 +94,7 @@ namespace LifxNet
 			var token = _DiscoverCancellationSource.Token;
 			var source = discoverSourceID = GetNextIdentifier();
 			//Start discovery thread
-            Task.Run(async () =>
+			Task.Run(async () =>
 			{
 				System.Diagnostics.Debug.WriteLine("Sending GetServices");
 				FrameHeader header = new FrameHeader()
@@ -103,14 +105,14 @@ namespace LifxNet
 				{
 					try
 					{
-						await BroadcastMessageAsync<UnknownResponse>(null, header, MessageType.DeviceGetService);
+						await BroadcastMessageToAllSubnetsAsync(header);
 					}
 					catch { }
 					await Task.Delay(5000);
 					var lostDevices = devices.Where(d => (DateTime.UtcNow - d.LastSeen).TotalMinutes > 5).ToArray();
-					if(lostDevices.Any())
+					if (lostDevices.Any())
 					{
-						foreach(var device in lostDevices)
+						foreach (var device in lostDevices)
 						{
 							devices.Remove(device);
 							DiscoveredBulbs.Remove(device.MacAddressName);
@@ -120,6 +122,71 @@ namespace LifxNet
 					}
 				}
 			});
+		}
+
+		private async Task BroadcastMessageToAllSubnetsAsync(FrameHeader header)
+		{
+			foreach (var ip in GetSubnetBroadcastIPs())
+			{
+				System.Diagnostics.Debug.WriteLine($"Broadcasting GetService to {ip}");
+				_ = await BroadcastMessageAsync<UnknownResponse>(ip, header, MessageType.DeviceGetService);
+			}
+		}
+
+		private List<string> GetSubnetBroadcastIPs()
+		{
+			List<string> localIPs = new List<string>();
+			System.Diagnostics.Debug.WriteLine("GetSubnetBroadcastIPs: Starting discovery");
+
+			try
+			{
+				var host = Dns.GetHostEntry(Dns.GetHostName());
+				System.Diagnostics.Debug.WriteLine($"Host name: {Dns.GetHostName()}");
+				System.Diagnostics.Debug.WriteLine($"Found {host.AddressList.Length} addresses");
+
+				foreach (var ip in host.AddressList)
+				{
+					System.Diagnostics.Debug.WriteLine($"Checking IP: {ip} (Family: {ip.AddressFamily})");
+					if (ip.AddressFamily == AddressFamily.InterNetwork)
+					{
+						var bytes = ip.GetAddressBytes();
+						System.Diagnostics.Debug.WriteLine($"IPv4 Address bytes: {string.Join(".", bytes)}");
+
+						if (bytes[0] == 10)
+						{
+							var broadcastIP = BroadcastFromIP(ip);
+							localIPs.Add(broadcastIP);
+							System.Diagnostics.Debug.WriteLine($"Added 10.x.x.x broadcast: {broadcastIP}");
+						}
+						if (bytes[0] == 192 && bytes[1] == 168) // MY subnet is 192.168.x.x
+						{
+							var broadcastIP = BroadcastFromIP(ip);
+							localIPs.Add(broadcastIP);
+							System.Diagnostics.Debug.WriteLine($"Added 192.168.x.x broadcast: {broadcastIP}");
+						}
+					}
+				}
+			}
+			catch (Exception ex)
+			{
+				System.Diagnostics.Debug.WriteLine($"Error in GetSubnetBroadcastIPs: {ex.Message}");
+			}
+
+			if (localIPs.Count == 0)
+			{
+				localIPs.Add("255.255.255.255");
+				System.Diagnostics.Debug.WriteLine("No local IPs found, added global broadcast");
+			}
+
+			System.Diagnostics.Debug.WriteLine($"Final broadcast IPs: {string.Join(", ", localIPs)}");
+			return localIPs;
+		}
+
+		private string BroadcastFromIP(IPAddress ip)
+		{
+			var bytes = ip.GetAddressBytes();
+			bytes[3] = 255;
+			return new IPAddress(bytes).ToString();
 		}
 
 		/// <summary>
@@ -144,7 +211,7 @@ namespace LifxNet
 		{
 			if (hostname == null)
 				throw new ArgumentNullException(nameof(hostname));
-			if(string.IsNullOrWhiteSpace(hostname))
+			if (string.IsNullOrWhiteSpace(hostname))
 				throw new ArgumentException(nameof(hostname));
 			HostName = hostname;
 			MacAddress = macAddress;
@@ -170,27 +237,27 @@ namespace LifxNet
 
 		internal DateTime LastSeen { get; set; }
 
-        /// <summary>
-        /// Gets the MAC address
-        /// </summary>
-        public byte[] MacAddress { get; }
+		/// <summary>
+		/// Gets the MAC address
+		/// </summary>
+		public byte[] MacAddress { get; }
 
-        /// <summary>
-        /// Gets the MAC address
-        /// </summary>
-        public string MacAddressName
-        {
-            get
-            {
-                if (MacAddress == null) return string.Empty;
-                return string.Join(":", MacAddress.Take(6).Select(tb => tb.ToString("X2")).ToArray());
-            }
-        }
-    }
-    /// <summary>
-    /// LIFX light bulb
-    /// </summary>
-    public sealed class LightBulb : Device
+		/// <summary>
+		/// Gets the MAC address
+		/// </summary>
+		public string MacAddressName
+		{
+			get
+			{
+				if (MacAddress == null) return string.Empty;
+				return string.Join(":", MacAddress.Take(6).Select(tb => tb.ToString("X2")).ToArray());
+			}
+		}
+	}
+	/// <summary>
+	/// LIFX light bulb
+	/// </summary>
+	public sealed class LightBulb : Device
 	{
 		/// <summary>
 		/// Initializes a new instance of a bulb instead of relying on discovery. At least the host name must be provide for the device to be usable.
@@ -202,5 +269,5 @@ namespace LifxNet
 		public LightBulb(string hostname, byte[] macAddress, byte service = 0, UInt32 port = 0) : base(hostname, macAddress, service, port)
 		{
 		}
-    }
+	}
 }

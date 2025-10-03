@@ -14,10 +14,10 @@ namespace LifxNet
 	/// </summary>
 	public partial class LifxClient : IDisposable
 	{
-		
+
 		private const int Port = 56700;
 		private UdpClient? _socket;
-        private bool _isRunning;
+		private bool _isRunning;
 
 		private LifxClient()
 		{
@@ -31,40 +31,58 @@ namespace LifxNet
 		{
 			LifxClient client = new LifxClient();
 			client.Initialize();
-            return Task.FromResult(client);
+			return Task.FromResult(client);
 		}
 
-        private void Initialize()
+		private void Initialize()
 		{
-            IPEndPoint end = new IPEndPoint(IPAddress.Any, Port);
-			_socket = new UdpClient(end);
-            _socket.Client.Blocking = false;
-			_socket.DontFragment = true;
-            _socket.Client.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.ReuseAddress, true);
-            _isRunning = true;
-            StartReceiveLoop();
+			try
+			{
+				IPEndPoint end = new IPEndPoint(IPAddress.Any, Port);
+				_socket = new UdpClient(end);
+				_socket.Client.Blocking = false;
+				_socket.DontFragment = true;
+				_socket.Client.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.ReuseAddress, true);
+				_isRunning = true;
+
+				System.Diagnostics.Debug.WriteLine($"UDP Client bound to {end}, actual local endpoint: {_socket.Client.LocalEndPoint}");
+				StartReceiveLoop();
+			}
+			catch (Exception ex)
+			{
+				System.Diagnostics.Debug.WriteLine($"Failed to initialize UDP client: {ex.Message}");
+				throw;
+			}
 		}
 
-        private void StartReceiveLoop()
-        {
-            Task.Run(async () =>
-            {
-                while (_isRunning && _socket != null)
-                    try
-                    {
-                        var result = await _socket.ReceiveAsync();
-                        if (result.Buffer.Length > 0)
-                        {
-                            HandleIncomingMessages(result.Buffer, result.RemoteEndPoint);
-                        }
-                    }
-                    catch { }
-            });
-        }
+		private void StartReceiveLoop()
+		{
+			Task.Run(async () =>
+			{
+				System.Diagnostics.Debug.WriteLine("Starting receive loop");
+				while (_isRunning && _socket != null)
 
-        private void HandleIncomingMessages(byte[] data, System.Net.IPEndPoint endpoint) 
+					try
+					{
+						var result = await _socket.ReceiveAsync();
+						if (result.Buffer.Length > 0)
+						{
+							HandleIncomingMessages(result.Buffer, result.RemoteEndPoint);
+						}
+					}
+					catch (Exception ex)
+					{
+						System.Diagnostics.Debug.WriteLine($"Error in receive loop: {ex.Message}");
+						if (!_isRunning) break; // Expected when disposing
+					}
+			});
+		}
+
+		private void HandleIncomingMessages(byte[] data, System.Net.IPEndPoint endpoint)
 		{
 			var remote = endpoint;
+			System.Diagnostics.Debug.WriteLine("Received from {0}:{1}", remote.ToString(),
+				string.Join(",", (from a in data select a.ToString("X2")).ToArray()));
 			var msg = ParseMessage(data);
 			if (msg.Type == MessageType.DeviceStateService)
 			{
@@ -75,15 +93,15 @@ namespace LifxNet
 				if (taskCompletions.ContainsKey(msg.Source))
 				{
 					var tcs = taskCompletions[msg.Source];
+					System.Diagnostics.Debug.WriteLine($"Found TCS for {msg.Source}, invoking");
 					tcs(msg);
 				}
 				else
 				{
-					//TODO
+					System.Diagnostics.Debug.WriteLine($"No TCS for {msg.Source}");
 				}
 			}
-			System.Diagnostics.Debug.WriteLine("Received from {0}:{1}", remote.ToString(),
-				string.Join(",", (from a in data select a.ToString("X2")).ToArray()));
+			System.Diagnostics.Debug.WriteLine("Finished processing message");
 
 		}
 
@@ -92,7 +110,7 @@ namespace LifxNet
 		/// </summary>
 		public void Dispose()
 		{
-            _isRunning = false;
+			_isRunning = false;
 			_socket?.Dispose();
 		}
 
@@ -138,38 +156,52 @@ namespace LifxNet
 				hostName = "255.255.255.255";
 			}
 			TaskCompletionSource<T>? tcs = null;
-            if (//header.AcknowledgeRequired && 
-				header.Identifier > 0 && 
+			if (//header.AcknowledgeRequired && 
+				header.Identifier > 0 &&
 				typeof(T) != typeof(UnknownResponse))
 			{
 				tcs = new TaskCompletionSource<T>();
 				Action<LifxResponse> action = (r) =>
 				{
 					if (r.GetType() == typeof(T))
+					{
 						tcs.TrySetResult((T)r);
+					}
 				};
 				taskCompletions[header.Identifier] = action;
 			}
 
-            using (MemoryStream stream = new MemoryStream())
-            {
-                WritePacketToStream(stream, header, (UInt16)type, payload);
-                var msg = stream.ToArray();
-                await _socket.SendAsync(msg, msg.Length, hostName, Port);
-            }
+			using (MemoryStream stream = new MemoryStream())
+			{
+				WritePacketToStream(stream, header, (UInt16)type, payload);
+				var msg = stream.ToArray();
+				try
+				{
+					await _socket.SendAsync(msg, msg.Length, hostName, Port);
+				}
+				catch (Exception ex)
+				{
+					System.Diagnostics.Debug.WriteLine($"Error sending to {hostName}: {ex.Message}");
+				}
+
+			}
 			//{
 			//	await WritePacketToStreamAsync(stream, header, (UInt16)type, payload).ConfigureAwait(false);
 			//}
 			T result = default(T);
-			if(tcs != null)
+			if (tcs != null)
 			{
-				var _ = Task.Delay(1000).ContinueWith((t) =>
+				var timeoutTask = Task.Delay(1000).ContinueWith((t) =>
 				{
-					if (!t.IsCompleted)
-						tcs.TrySetException(new TimeoutException());
+					tcs.TrySetException(new TimeoutException());
 				});
-				try {
+				try
+				{
 					result = await tcs.Task.ConfigureAwait(false);
+				}
+				catch (TimeoutException)
+				{
+					result = default(T); // Return default instead of throwing
 				}
 				finally
 				{
@@ -193,13 +225,13 @@ namespace LifxNet
 				var source = br.ReadUInt32();
 				//frame address
 				byte[] target = br.ReadBytes(8);
-                header.TargetMacAddress = target;
+				header.TargetMacAddress = target;
 				ms.Seek(6, SeekOrigin.Current); //skip reserved
 				var b = br.ReadByte(); //reserved:6, ack_required:1, res_required:1, 
 				header.Sequence = br.ReadByte();
 				//protocol header
 				var nanoseconds = br.ReadUInt64();
-                header.AtTime = Utilities.Epoch.AddMilliseconds(nanoseconds * 0.000001);
+				header.AtTime = Utilities.Epoch.AddMilliseconds(nanoseconds * 0.000001);
 				var type = (MessageType)br.ReadUInt16();
 				ms.Seek(2, SeekOrigin.Current); //skip reserved
 				return LifxResponse.Create(header, type, source, size > 36 ? br.ReadBytes(size - 36) : new byte[] { });
@@ -214,7 +246,7 @@ namespace LifxNet
 				#region Frame
 				//size uint16
 				dw.Write((UInt16)((payload != null ? payload.Length : 0) + 36)); //length
-																					   // origin (2 bits, must be 0), reserved (1 bit, must be 0), addressable (1 bit, must be 1), protocol 12 bits must be 0x400) = 0x1400
+																				 // origin (2 bits, must be 0), reserved (1 bit, must be 0), addressable (1 bit, must be 1), protocol 12 bits must be 0x400) = 0x1400
 				dw.Write((UInt16)0x3400); //protocol
 				dw.Write((UInt32)header.Identifier); //source identifier - unique value set by the client, used by responses. If 0, responses are broadcasted instead
 				#endregion Frame
@@ -287,14 +319,14 @@ namespace LifxNet
 			TargetMacAddress = new byte[] { 0, 0, 0, 0, 0, 0, 0, 0 };
 			AtTime = DateTime.MinValue;
 		}
-        public string TargetMacAddressName
-        {
-            get
-            {
-                if (TargetMacAddress == null) return string.Empty;
-                return string.Join(":", TargetMacAddress.Take(6).Select(tb => tb.ToString("X2")).ToArray());
-            }
-        }
-    }
+		public string TargetMacAddressName
+		{
+			get
+			{
+				if (TargetMacAddress == null) return string.Empty;
+				return string.Join(":", TargetMacAddress.Take(6).Select(tb => tb.ToString("X2")).ToArray());
+			}
+		}
+	}
 
 }

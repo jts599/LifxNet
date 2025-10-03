@@ -138,12 +138,12 @@ namespace LifxNet
 			if (transitionDuration.TotalMilliseconds > UInt32.MaxValue ||
 				transitionDuration.Ticks < 0)
 				throw new ArgumentOutOfRangeException("transitionDuration");
-			if (kelvin < 2500 || kelvin > 9000)
+			if (kelvin < 1500 || kelvin > 9000)
 			{
-				throw new ArgumentOutOfRangeException("kelvin", "Kelvin must be between 2500 and 9000");
+				throw new ArgumentOutOfRangeException("kelvin", "Kelvin must be between 1500 and 9000");
 			}
 
-				System.Diagnostics.Debug.WriteLine("Setting color to {0}", bulb.HostName);
+			System.Diagnostics.Debug.WriteLine("Setting color to {0}", bulb.HostName);
 			FrameHeader header = new FrameHeader()
 			{
 				Identifier = GetNextIdentifier(),
@@ -160,7 +160,7 @@ namespace LifxNet
 				MessageType.LightSetColor, (byte)0x00, //reserved
 					hue, saturation, brightness, kelvin, //HSBK
 					duration
-			);
+			).ConfigureAwait(false);
 		}
 
 		/*
@@ -186,11 +186,11 @@ namespace LifxNet
 			);
 		}*/
 
-			/// <summary>
-			/// Gets the current state of the bulb
-			/// </summary>
-			/// <param name="bulb"></param>
-			/// <returns></returns>
+		/// <summary>
+		/// Gets the current state of the bulb
+		/// </summary>
+		/// <param name="bulb"></param>
+		/// <returns></returns>
 		public Task<LightStateResponse> GetLightStateAsync(LightBulb bulb)
 		{
 			if (bulb == null)
@@ -219,7 +219,7 @@ namespace LifxNet
 			{
 				Identifier = GetNextIdentifier(),
 				AcknowledgeRequired = true
-			};	
+			};
 			return (await BroadcastMessageAsync<InfraredStateRespone>(
 				bulb.HostName, header, MessageType.InfraredGet).ConfigureAwait(false)).Brightness;
 		}
