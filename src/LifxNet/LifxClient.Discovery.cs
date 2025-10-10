@@ -101,6 +101,10 @@ namespace LifxNet
 				{
 					Identifier = source
 				};
+				
+				// Initial delay to ensure socket is fully ready
+				await Task.Delay(200);
+				
 				while (!token.IsCancellationRequested)
 				{
 					try
@@ -126,10 +130,23 @@ namespace LifxNet
 
 		private async Task BroadcastMessageToAllSubnetsAsync(FrameHeader header)
 		{
-			foreach (var ip in GetSubnetBroadcastIPs())
+			var broadcastIPs = GetSubnetBroadcastIPs();
+			Console.WriteLine($"Broadcasting to {broadcastIPs.Count} subnets...");
+
+			foreach (var ip in broadcastIPs)
 			{
 				System.Diagnostics.Debug.WriteLine($"Broadcasting GetService to {ip}");
-				_ = await BroadcastMessageAsync<UnknownResponse>(ip, header, MessageType.DeviceGetService);
+				Console.WriteLine($"Broadcasting GetService to {ip}");
+
+				try
+				{
+					var result = await BroadcastMessageAsync<UnknownResponse>(ip, header, MessageType.DeviceGetService);
+					Console.WriteLine($"✓ Broadcast to {ip} completed");
+				}
+				catch (Exception ex)
+				{
+					Console.WriteLine($"✗ Broadcast to {ip} failed: {ex.Message}");
+				}
 			}
 		}
 
@@ -137,32 +154,40 @@ namespace LifxNet
 		{
 			List<string> localIPs = new List<string>();
 			System.Diagnostics.Debug.WriteLine("GetSubnetBroadcastIPs: Starting discovery");
+			Console.WriteLine("GetSubnetBroadcastIPs: Starting discovery");
 
 			try
 			{
 				var host = Dns.GetHostEntry(Dns.GetHostName());
 				System.Diagnostics.Debug.WriteLine($"Host name: {Dns.GetHostName()}");
 				System.Diagnostics.Debug.WriteLine($"Found {host.AddressList.Length} addresses");
+				Console.WriteLine($"Host name: {Dns.GetHostName()}");
+				Console.WriteLine($"Found {host.AddressList.Length} addresses");
 
 				foreach (var ip in host.AddressList)
 				{
 					System.Diagnostics.Debug.WriteLine($"Checking IP: {ip} (Family: {ip.AddressFamily})");
+					Console.WriteLine($"Checking IP: {ip} (Family: {ip.AddressFamily})");
+
 					if (ip.AddressFamily == AddressFamily.InterNetwork)
 					{
 						var bytes = ip.GetAddressBytes();
 						System.Diagnostics.Debug.WriteLine($"IPv4 Address bytes: {string.Join(".", bytes)}");
+						Console.WriteLine($"IPv4 Address bytes: {string.Join(".", bytes)}");
 
 						if (bytes[0] == 10)
 						{
 							var broadcastIP = BroadcastFromIP(ip);
 							localIPs.Add(broadcastIP);
 							System.Diagnostics.Debug.WriteLine($"Added 10.x.x.x broadcast: {broadcastIP}");
+							Console.WriteLine($"Added 10.x.x.x broadcast: {broadcastIP}");
 						}
 						if (bytes[0] == 192 && bytes[1] == 168) // MY subnet is 192.168.x.x
 						{
 							var broadcastIP = BroadcastFromIP(ip);
 							localIPs.Add(broadcastIP);
 							System.Diagnostics.Debug.WriteLine($"Added 192.168.x.x broadcast: {broadcastIP}");
+							Console.WriteLine($"Added 192.168.x.x broadcast: {broadcastIP}");
 						}
 					}
 				}
@@ -170,15 +195,18 @@ namespace LifxNet
 			catch (Exception ex)
 			{
 				System.Diagnostics.Debug.WriteLine($"Error in GetSubnetBroadcastIPs: {ex.Message}");
+				Console.WriteLine($"Error in GetSubnetBroadcastIPs: {ex.Message}");
 			}
 
 			if (localIPs.Count == 0)
 			{
 				localIPs.Add("255.255.255.255");
 				System.Diagnostics.Debug.WriteLine("No local IPs found, added global broadcast");
+				Console.WriteLine("No local IPs found, added global broadcast");
 			}
 
 			System.Diagnostics.Debug.WriteLine($"Final broadcast IPs: {string.Join(", ", localIPs)}");
+			Console.WriteLine($"Final broadcast IPs: {string.Join(", ", localIPs)}");
 			return localIPs;
 		}
 

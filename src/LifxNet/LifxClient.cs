@@ -38,15 +38,39 @@ namespace LifxNet
 		{
 			try
 			{
-				IPEndPoint end = new IPEndPoint(IPAddress.Any, Port);
-				_socket = new UdpClient(end);
+				// Create socket that works on both Windows and Linux
+				_socket = new UdpClient(Port);
 				_socket.Client.Blocking = false;
-				_socket.DontFragment = true;
-				_socket.Client.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.ReuseAddress, true);
+
+				// Try to set broadcast - platform specific handling
+				try
+				{
+					_socket.Client.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.ReuseAddress, true);
+					_socket.Client.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.Broadcast, true);
+					System.Diagnostics.Debug.WriteLine("Socket options set successfully");
+				}
+				catch (Exception optEx)
+				{
+					System.Diagnostics.Debug.WriteLine($"Warning: Some socket options failed: {optEx.Message}");
+				}
+
+				// Alternative: Enable broadcast via UdpClient property if available
+				try
+				{
+					_socket.EnableBroadcast = true;
+					System.Diagnostics.Debug.WriteLine("EnableBroadcast property set successfully");
+				}
+				catch (Exception)
+				{
+					System.Diagnostics.Debug.WriteLine("EnableBroadcast property not available or failed");
+				}
+
 				_isRunning = true;
 
-				System.Diagnostics.Debug.WriteLine($"UDP Client bound to {end}, actual local endpoint: {_socket.Client.LocalEndPoint}");
-				StartReceiveLoop();
+				System.Diagnostics.Debug.WriteLine($"UDP Client bound to port {Port}, actual local endpoint: {_socket.Client.LocalEndPoint}");
+				
+				// Delay starting receive loop to ensure socket is fully initialized
+				Task.Delay(100).ContinueWith(_ => StartReceiveLoop());
 			}
 			catch (Exception ex)
 			{
@@ -60,11 +84,14 @@ namespace LifxNet
 			Task.Run(async () =>
 			{
 				System.Diagnostics.Debug.WriteLine("Starting receive loop");
-				while (_isRunning && _socket != null)
-
+				while (_isRunning)
+				{
+					var socket = _socket; // Capture reference to avoid race condition
+					if (socket == null) break;
+					
 					try
 					{
-						var result = await _socket.ReceiveAsync();
+						var result = await socket.ReceiveAsync();
 						if (result.Buffer.Length > 0)
 						{
 							HandleIncomingMessages(result.Buffer, result.RemoteEndPoint);
@@ -75,6 +102,7 @@ namespace LifxNet
 						System.Diagnostics.Debug.WriteLine($"Error in receive loop: {ex.Message}");
 						if (!_isRunning) break; // Expected when disposing
 					}
+				}
 			});
 		}
 
@@ -175,13 +203,39 @@ namespace LifxNet
 			{
 				WritePacketToStream(stream, header, (UInt16)type, payload);
 				var msg = stream.ToArray();
+
+				// Enhanced debugging
+				var hexString = string.Join("", msg.Select(b => b.ToString("X2")));
+				System.Diagnostics.Debug.WriteLine($"Preparing to send {msg.Length} bytes to {hostName}:{Port}");
+				System.Diagnostics.Debug.WriteLine($"Packet content: {hexString}");
+				Console.WriteLine($"Preparing to send {msg.Length} bytes to {hostName}:{Port}");
+				Console.WriteLine($"Packet content: {hexString}");
+
+				// Check socket state
+				var socket = _socket; // Capture reference to avoid race condition
+				if (socket?.Client == null)
+				{
+					Console.WriteLine("ERROR: Socket or Client is null!");
+					throw new InvalidOperationException("Socket is not properly initialized");
+				}
+
+				Console.WriteLine($"Socket bound to: {socket.Client.LocalEndPoint}");
+				Console.WriteLine($"Socket broadcast enabled: {socket.EnableBroadcast}");
+
 				try
 				{
-					await _socket.SendAsync(msg, msg.Length, hostName, Port);
+					System.Diagnostics.Debug.WriteLine($"Attempting to send {msg.Length} bytes to {hostName}:{Port}");
+					await socket.SendAsync(msg, msg.Length, hostName, Port);
+					System.Diagnostics.Debug.WriteLine($"Successfully sent packet to {hostName}:{Port}");
+					Console.WriteLine($"✓ Successfully sent packet to {hostName}:{Port}");
 				}
 				catch (Exception ex)
 				{
 					System.Diagnostics.Debug.WriteLine($"Error sending to {hostName}: {ex.Message}");
+					Console.WriteLine($"✗ Error sending to {hostName}: {ex.Message}");
+					Console.WriteLine($"Exception type: {ex.GetType().Name}");
+					Console.WriteLine($"Stack trace: {ex.StackTrace}");
+					throw;
 				}
 
 			}
