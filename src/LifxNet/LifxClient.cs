@@ -68,7 +68,7 @@ namespace LifxNet
 				_isRunning = true;
 
 				System.Diagnostics.Debug.WriteLine($"UDP Client bound to port {Port}, actual local endpoint: {_socket.Client.LocalEndPoint}");
-				
+
 				// Delay starting receive loop to ensure socket is fully initialized
 				Task.Delay(100).ContinueWith(_ => StartReceiveLoop());
 			}
@@ -88,7 +88,7 @@ namespace LifxNet
 				{
 					var socket = _socket; // Capture reference to avoid race condition
 					if (socket == null) break;
-					
+
 					try
 					{
 						var result = await socket.ReceiveAsync();
@@ -206,10 +206,10 @@ namespace LifxNet
 
 				// Enhanced debugging
 				var hexString = string.Join("", msg.Select(b => b.ToString("X2")));
-				System.Diagnostics.Debug.WriteLine($"Preparing to send {msg.Length} bytes to {hostName}:{Port}");
-				System.Diagnostics.Debug.WriteLine($"Packet content: {hexString}");
-				Console.WriteLine($"Preparing to send {msg.Length} bytes to {hostName}:{Port}");
-				Console.WriteLine($"Packet content: {hexString}");
+				//System.Diagnostics.Debug.WriteLine($"Preparing to send {msg.Length} bytes to {hostName}:{Port}");
+				//System.Diagnostics.Debug.WriteLine($"Packet content: {hexString}");
+				//Console.WriteLine($"Preparing to send {msg.Length} bytes to {hostName}:{Port}");
+				//Console.WriteLine($"Packet content: {hexString}");
 
 				// Check socket state
 				var socket = _socket; // Capture reference to avoid race condition
@@ -219,15 +219,15 @@ namespace LifxNet
 					throw new InvalidOperationException("Socket is not properly initialized");
 				}
 
-				Console.WriteLine($"Socket bound to: {socket.Client.LocalEndPoint}");
-				Console.WriteLine($"Socket broadcast enabled: {socket.EnableBroadcast}");
+				//Console.WriteLine($"Socket bound to: {socket.Client.LocalEndPoint}");
+				//Console.WriteLine($"Socket broadcast enabled: {socket.EnableBroadcast}");
 
 				try
 				{
-					System.Diagnostics.Debug.WriteLine($"Attempting to send {msg.Length} bytes to {hostName}:{Port}");
+					//System.Diagnostics.Debug.WriteLine($"Attempting to send {msg.Length} bytes to {hostName}:{Port}");
 					await socket.SendAsync(msg, msg.Length, hostName, Port);
-					System.Diagnostics.Debug.WriteLine($"Successfully sent packet to {hostName}:{Port}");
-					Console.WriteLine($"✓ Successfully sent packet to {hostName}:{Port}");
+					//System.Diagnostics.Debug.WriteLine($"Successfully sent packet to {hostName}:{Port}");
+					//Console.WriteLine($"✓ Successfully sent packet to {hostName}:{Port}");
 				}
 				catch (Exception ex)
 				{
