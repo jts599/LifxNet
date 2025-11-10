@@ -1,0 +1,45 @@
+diff --git a/src/LifxNet/LifxClient.Discovery.cs b/src/LifxNet/LifxClient.Discovery.cs
+index cb33bd6..28bd454 100644
+--- a/src/LifxNet/LifxClient.Discovery.cs
++++ b/src/LifxNet/LifxClient.Discovery.cs
+@@ -101,10 +101,10 @@ namespace LifxNet
+ 				{
+ 					Identifier = source
+ 				};
+-				
++
+ 				// Initial delay to ensure socket is fully ready
+ 				await Task.Delay(200);
+-				
++
+ 				while (!token.IsCancellationRequested)
+ 				{
+ 					try
+@@ -112,7 +112,7 @@ namespace LifxNet
+ 						await BroadcastMessageToAllSubnetsAsync(header);
+ 					}
+ 					catch { }
+-					await Task.Delay(5000);
++					await Task.Delay(2000);
+ 					var lostDevices = devices.Where(d => (DateTime.UtcNow - d.LastSeen).TotalMinutes > 5).ToArray();
+ 					if (lostDevices.Any())
+ 					{
+@@ -128,6 +128,18 @@ namespace LifxNet
+ 			});
+ 		}
+ 
++		/// <summary>
++		/// Refreshes the list of discovered devices by restarting discovery.
++		/// </summary>
++		/// <returns></returns>
++		public Task RefreshDevicesAsync()
++		{
++			StartDeviceDiscovery();
++			//StartDeviceDiscovery(); has a 2.0 second delay inside, so wait 2.5 seconds to ensure devices are discovered 
++			//before issuing the stop command
++			return Task.Delay(2500).ContinueWith(_ => StopDeviceDiscovery());
++		}
++
+ 		private async Task BroadcastMessageToAllSubnetsAsync(FrameHeader header)
+ 		{
+ 			var broadcastIPs = GetSubnetBroadcastIPs();

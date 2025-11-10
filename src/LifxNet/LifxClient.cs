@@ -116,18 +116,29 @@ namespace LifxNet
 			{
 				ProcessDeviceDiscoveryMessage(remote.Address, remote.Port, msg);
 			}
+			else if (msg.Type == MessageType.DeviceAcknowledgement)
+			{
+				string macAddress = msg.Header.TargetMacAddressName;
+				foreach (var device in devices)
+				{
+					if (device.MacAddressName == macAddress)
+					{
+						device.LastSeen = DateTime.Now;
+						System.Diagnostics.Debug.WriteLine($"Device {device.MacAddress} acknowledged at {device.LastSeen}");
+						break;
+					}
+				}
+			}
+			
+			if (taskCompletions.ContainsKey(msg.Source))
+			{
+				var tcs = taskCompletions[msg.Source];
+				System.Diagnostics.Debug.WriteLine($"Found TCS for {msg.Source}, invoking");
+				tcs(msg);
+			}
 			else
 			{
-				if (taskCompletions.ContainsKey(msg.Source))
-				{
-					var tcs = taskCompletions[msg.Source];
-					System.Diagnostics.Debug.WriteLine($"Found TCS for {msg.Source}, invoking");
-					tcs(msg);
-				}
-				else
-				{
-					System.Diagnostics.Debug.WriteLine($"No TCS for {msg.Source}");
-				}
+				System.Diagnostics.Debug.WriteLine($"No TCS for {msg.Source}");
 			}
 			System.Diagnostics.Debug.WriteLine("Finished processing message");
 
@@ -232,9 +243,6 @@ namespace LifxNet
 				catch (Exception ex)
 				{
 					System.Diagnostics.Debug.WriteLine($"Error sending to {hostName}: {ex.Message}");
-					Console.WriteLine($"✗ Error sending to {hostName}: {ex.Message}");
-					Console.WriteLine($"Exception type: {ex.GetType().Name}");
-					Console.WriteLine($"Stack trace: {ex.StackTrace}");
 					throw;
 				}
 

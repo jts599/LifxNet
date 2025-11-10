@@ -62,9 +62,7 @@ namespace LifxNet
 
 				return;
 			}
-			if (msg.Source != discoverSourceID || //did we request the discovery?
-				_DiscoverCancellationSource == null ||
-				_DiscoverCancellationSource.IsCancellationRequested) //did we cancel discovery?
+			if (msg.Source != discoverSourceID) //Did we request this?
 				return;
 
 			var device = new LightBulb(remoteAddress.ToString(), msg.Header.TargetMacAddress, msg.Payload[0]
@@ -86,64 +84,75 @@ namespace LifxNet
 		/// <seealso cref="DeviceDiscovered"/>
 		/// <seealso cref="DeviceLost"/>
 		/// <seealso cref="StopDeviceDiscovery"/>
-		public void StartDeviceDiscovery()
+		public async Task StartDeviceDiscovery(bool retryRepeatedly = true)
 		{
 			if (_DiscoverCancellationSource != null && !_DiscoverCancellationSource.IsCancellationRequested)
 				return;
-			_DiscoverCancellationSource = new CancellationTokenSource();
-			var token = _DiscoverCancellationSource.Token;
+			CancellationToken token = CancellationToken.None;
+			if (retryRepeatedly)
+			{
+				_DiscoverCancellationSource = new CancellationTokenSource();
+				token = _DiscoverCancellationSource.Token;
+			}
+			
 			var source = discoverSourceID = GetNextIdentifier();
 			//Start discovery thread
-			Task.Run(async () =>
+			await Task.Run(async () =>
 			{
-				System.Diagnostics.Debug.WriteLine("Sending GetServices");
-				FrameHeader header = new FrameHeader()
-				{
-					Identifier = source
-				};
-
 				// Initial delay to ensure socket is fully ready
 				await Task.Delay(200);
 
-				while (!token.IsCancellationRequested)
+				do
 				{
-					try
-					{
-						await BroadcastMessageToAllSubnetsAsync(header);
-					}
-					catch { }
-					await Task.Delay(2000);
-					var lostDevices = devices.Where(d => (DateTime.UtcNow - d.LastSeen).TotalMinutes > 5).ToArray();
-					if (lostDevices.Any())
-					{
-						foreach (var device in lostDevices)
-						{
-							devices.Remove(device);
-							DiscoveredBulbs.Remove(device.MacAddressName);
-							if (DeviceLost != null)
-								DeviceLost(this, new DeviceDiscoveryEventArgs(device));
-						}
-					}
-				}
+					await RefreshDevicesAsync();
+				} while (retryRepeatedly && !token.IsCancellationRequested);
 			});
+		}
+
+		/// <summary>
+        /// A lightweight method to do an initial device discovery.
+		/// No repeated discovery is done after this call.
+        /// </summary>
+		public async Task DoInitialDeviceDiscovery()
+		{
+			await StartDeviceDiscovery(false);
 		}
 
 		/// <summary>
 		/// Refreshes the list of discovered devices by restarting discovery.
 		/// </summary>
 		/// <returns></returns>
-		public Task RefreshDevicesAsync()
+		public async Task RefreshDevicesAsync()
 		{
-			StartDeviceDiscovery();
-			//StartDeviceDiscovery(); has a 2.0 second delay inside, so wait 2.5 seconds to ensure devices are discovered 
-			//before issuing the stop command
-			return Task.Delay(2500).ContinueWith(_ => StopDeviceDiscovery());
+
+			var identifier = (discoverSourceID != 0) ? discoverSourceID : GetNextIdentifier();
+			FrameHeader header = new FrameHeader()
+			{
+				Identifier = identifier
+			};
+
+			try
+			{
+				await BroadcastMessageToAllSubnetsAsync(header);
+			}
+			catch { }
+			await Task.Delay(1000); //wait a second for responses
+			var lostDevices = devices.Where(d => (DateTime.UtcNow - d.LastSeen).TotalMinutes > 5).ToArray();
+			if (lostDevices.Any())
+			{
+				foreach (var device in lostDevices)
+				{
+					devices.Remove(device);
+					DiscoveredBulbs.Remove(device.MacAddressName);
+					if (DeviceLost != null)
+						DeviceLost(this, new DeviceDiscoveryEventArgs(device));
+				}
+			}
 		}
 
 		private async Task BroadcastMessageToAllSubnetsAsync(FrameHeader header)
 		{
 			var broadcastIPs = GetSubnetBroadcastIPs();
-			Console.WriteLine($"Broadcasting to {broadcastIPs.Count} subnets...");
 
 			foreach (var ip in broadcastIPs)
 			{
@@ -157,7 +166,7 @@ namespace LifxNet
 				}
 				catch (Exception ex)
 				{
-					Console.WriteLine($"✗ Broadcast to {ip} failed: {ex.Message}");
+					continue;
 				}
 			}
 		}
