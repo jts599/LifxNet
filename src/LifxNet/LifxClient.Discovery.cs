@@ -164,8 +164,8 @@ namespace LifxNet
 					var result = await BroadcastMessageAsync<UnknownResponse>(ip, header, MessageType.DeviceGetService);
 					Console.WriteLine($"✓ Broadcast to {ip} completed");
 				}
-				catch (Exception ex)
-				{
+				catch (Exception)
+                {
 					continue;
 				}
 			}
