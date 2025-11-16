@@ -34,43 +34,75 @@ namespace LifxNet
 			return Task.FromResult(client);
 		}
 
-		private void Initialize()
+	private void CreateSocket()
+	{	
+		// Properly close and dispose existing socket
+		if (_socket != null)
 		{
 			try
 			{
-				// Create socket that works on both Windows and Linux
-				_socket = new UdpClient(Port);
-				_socket.Client.Blocking = false;
+				// UDP is connectionless, just close it directly
+				_socket.Close();
+			}
+			catch (Exception ex)
+			{
+				System.Diagnostics.Debug.WriteLine($"Error closing socket: {ex.Message}");
+			}
+			finally
+			{
+				_socket.Dispose();
+				_socket = null;
+			}
 
-				// Try to set broadcast - platform specific handling
-				try
-				{
-					_socket.Client.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.ReuseAddress, true);
-					_socket.Client.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.Broadcast, true);
-					System.Diagnostics.Debug.WriteLine("Socket options set successfully");
-				}
-				catch (Exception optEx)
-				{
-					System.Diagnostics.Debug.WriteLine($"Warning: Some socket options failed: {optEx.Message}");
-				}
+			// Give the OS a moment to fully release the port
+			Task.Delay(100).Wait();
+		}
 
-				// Alternative: Enable broadcast via UdpClient property if available
-				try
+		// Attempt to create and bind the new socket with retry logic
+		int retries = 3;
+		for (int i = 0; i < retries; i++)
+		{
+			try
+			{
+				_socket = new UdpClient(AddressFamily.InterNetwork);
+				
+				// Platform-specific socket options for proper port reuse
+				_socket.Client.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.ReuseAddress, true);
+				
+				// On Windows, explicitly disable ExclusiveAddressUse to allow port reuse
+				if (OperatingSystem.IsWindows())
 				{
-					_socket.EnableBroadcast = true;
-					System.Diagnostics.Debug.WriteLine("EnableBroadcast property set successfully");
+					_socket.ExclusiveAddressUse = false;
 				}
-				catch (Exception)
+				
+				_socket.EnableBroadcast = true;
+				_socket.Client.Bind(new IPEndPoint(IPAddress.Any, Port));
+				_socket.Client.Blocking = true;
+				StartReceiveLoop();
+				System.Diagnostics.Debug.WriteLine($"Socket successfully bound to port {Port}");
+				return; // Success!
+			}
+			catch (SocketException ex) when (ex.SocketErrorCode == SocketError.AddressAlreadyInUse)
+			{
+				System.Diagnostics.Debug.WriteLine($"Port {Port} still in use, retry {i + 1}/{retries}");
+				if (i < retries - 1)
 				{
-					System.Diagnostics.Debug.WriteLine("EnableBroadcast property not available or failed");
+					Task.Delay(500).Wait(); // Wait longer before retry
 				}
+				else
+				{
+					throw; // Failed after all retries
+				}
+			}
+		}
+	}
 
+	private void Initialize()
+		{
+			try
+			{
+				CreateSocket();
 				_isRunning = true;
-
-				System.Diagnostics.Debug.WriteLine($"UDP Client bound to port {Port}, actual local endpoint: {_socket.Client.LocalEndPoint}");
-
-				// Delay starting receive loop to ensure socket is fully initialized
-				Task.Delay(100).ContinueWith(_ => StartReceiveLoop());
 			}
 			catch (Exception ex)
 			{
@@ -100,6 +132,7 @@ namespace LifxNet
 					catch (Exception ex)
 					{
 						System.Diagnostics.Debug.WriteLine($"Error in receive loop: {ex.Message}");
+						CreateSocket(); // Recreate socket on error
 						if (!_isRunning) break; // Expected when disposing
 					}
 				}
@@ -109,9 +142,9 @@ namespace LifxNet
 		private void HandleIncomingMessages(byte[] data, System.Net.IPEndPoint endpoint)
 		{
 			var remote = endpoint;
-			System.Diagnostics.Debug.WriteLine("Received from {0}:{1}", remote.ToString(),
-				string.Join(",", (from a in data select a.ToString("X2")).ToArray()));
 			var msg = ParseMessage(data);
+			System.Diagnostics.Debug.WriteLine("Received from {0}:{1}", remote.ToString(),
+				msg.Type.ToString());
 			if (msg.Type == MessageType.DeviceStateService)
 			{
 				ProcessDeviceDiscoveryMessage(remote.Address, remote.Port, msg);
@@ -133,27 +166,36 @@ namespace LifxNet
 			if (taskCompletions.ContainsKey(msg.Source))
 			{
 				var tcs = taskCompletions[msg.Source];
-				System.Diagnostics.Debug.WriteLine($"Found TCS for {msg.Source}, invoking");
 				tcs(msg);
 			}
-			else
-			{
-				System.Diagnostics.Debug.WriteLine($"No TCS for {msg.Source}");
-			}
-			System.Diagnostics.Debug.WriteLine("Finished processing message");
 
 		}
 
-		/// <summary>
-		/// Disposes the client
-		/// </summary>
-		public void Dispose()
+	/// <summary>
+	/// Disposes the client
+	/// </summary>
+	public void Dispose()
+	{
+		_isRunning = false;
+		
+		if (_socket != null)
 		{
-			_isRunning = false;
-			_socket?.Dispose();
+			try
+			{
+				// UDP is connectionless, just close it directly
+				_socket.Close();
+			}
+			catch (Exception ex)
+			{
+				System.Diagnostics.Debug.WriteLine($"Error disposing socket: {ex.Message}");
+			}
+			finally
+			{
+				_socket.Dispose();
+				_socket = null;
+			}
 		}
-
-		private Task<T> BroadcastMessageAsync<T>(string? hostName, FrameHeader header, MessageType type, params object[] args)
+	}		private Task<T> BroadcastMessageAsync<T>(string? hostName, FrameHeader header, MessageType type, params object[] args)
 						where T : LifxResponse
 
 		{

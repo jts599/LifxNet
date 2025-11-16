@@ -23,11 +23,12 @@ namespace SampleApp.NET462
                 await client.SetLightPowerAsync(bulb, TimeSpan.FromMilliseconds(0), true);
                 await SetColorRed(bulb);
             }
-            
-            await Task.Delay(1000);
-            await client.RefreshDevicesAsync();
-
-            Console.Read();
+            while (true)
+            {
+                await Task.Delay(1000);
+                await client.RefreshDevicesAsync();
+                Console.WriteLine("Refreshed devices");
+            }
         }
 
         private static void Client_DeviceLost(object sender, LifxClient.DeviceDiscoveryEventArgs e)
