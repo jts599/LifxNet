@@ -34,70 +34,70 @@ namespace LifxNet
 			return Task.FromResult(client);
 		}
 
-	private void CreateSocket()
-	{	
-		// Properly close and dispose existing socket
-		if (_socket != null)
+		private void CreateSocket()
 		{
-			try
+			// Properly close and dispose existing socket
+			if (_socket != null)
 			{
-				// UDP is connectionless, just close it directly
-				_socket.Close();
-			}
-			catch (Exception ex)
-			{
-				System.Diagnostics.Debug.WriteLine($"Error closing socket: {ex.Message}");
-			}
-			finally
-			{
-				_socket.Dispose();
-				_socket = null;
+				try
+				{
+					// UDP is connectionless, just close it directly
+					_socket.Close();
+				}
+				catch (Exception ex)
+				{
+					System.Diagnostics.Debug.WriteLine($"Error closing socket: {ex.Message}");
+				}
+				finally
+				{
+					_socket.Dispose();
+					_socket = null;
+				}
+
+				// Give the OS a moment to fully release the port
+				Task.Delay(100).Wait();
 			}
 
-			// Give the OS a moment to fully release the port
-			Task.Delay(100).Wait();
+			// Attempt to create and bind the new socket with retry logic
+			int retries = 3;
+			for (int i = 0; i < retries; i++)
+			{
+				try
+				{
+					_socket = new UdpClient(AddressFamily.InterNetwork);
+
+					// Platform-specific socket options for proper port reuse
+					_socket.Client.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.ReuseAddress, true);
+
+					// On Windows, explicitly disable ExclusiveAddressUse to allow port reuse
+					if (OperatingSystem.IsWindows())
+					{
+						_socket.ExclusiveAddressUse = false;
+					}
+
+					_socket.EnableBroadcast = true;
+					_socket.Client.Bind(new IPEndPoint(IPAddress.Any, Port));
+					_socket.Client.Blocking = true;
+					StartReceiveLoop();
+					System.Diagnostics.Debug.WriteLine($"Socket successfully bound to port {Port}");
+					return; // Success!
+				}
+				catch (SocketException ex) when (ex.SocketErrorCode == SocketError.AddressAlreadyInUse)
+				{
+					System.Diagnostics.Debug.WriteLine($"Port {Port} still in use, retry {i + 1}/{retries}");
+					if (i < retries - 1)
+					{
+						Task.Delay(500).Wait(); // Wait longer before retry
+					}
+					else
+					{
+						throw; // Failed after all retries
+					}
+				}
+			}
 		}
 
-		// Attempt to create and bind the new socket with retry logic
-		int retries = 3;
-		for (int i = 0; i < retries; i++)
-		{
-			try
-			{
-				_socket = new UdpClient(AddressFamily.InterNetwork);
-				
-				// Platform-specific socket options for proper port reuse
-				_socket.Client.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.ReuseAddress, true);
-				
-				// On Windows, explicitly disable ExclusiveAddressUse to allow port reuse
-				if (OperatingSystem.IsWindows())
-				{
-					_socket.ExclusiveAddressUse = false;
-				}
-				
-				_socket.EnableBroadcast = true;
-				_socket.Client.Bind(new IPEndPoint(IPAddress.Any, Port));
-				_socket.Client.Blocking = true;
-				StartReceiveLoop();
-				System.Diagnostics.Debug.WriteLine($"Socket successfully bound to port {Port}");
-				return; // Success!
-			}
-			catch (SocketException ex) when (ex.SocketErrorCode == SocketError.AddressAlreadyInUse)
-			{
-				System.Diagnostics.Debug.WriteLine($"Port {Port} still in use, retry {i + 1}/{retries}");
-				if (i < retries - 1)
-				{
-					Task.Delay(500).Wait(); // Wait longer before retry
-				}
-				else
-				{
-					throw; // Failed after all retries
-				}
-			}
-		}
-	}
-
-	private void Initialize()
+		private void Initialize()
 		{
 			try
 			{
@@ -152,7 +152,7 @@ namespace LifxNet
 			else if (msg.Type == MessageType.DeviceAcknowledgement)
 			{
 				string macAddress = msg.Header.TargetMacAddressName;
-				foreach (var device in devices)
+				foreach (var device in Devices)
 				{
 					if (device.MacAddressName == macAddress)
 					{
@@ -162,7 +162,7 @@ namespace LifxNet
 					}
 				}
 			}
-			
+
 			if (taskCompletions.ContainsKey(msg.Source))
 			{
 				var tcs = taskCompletions[msg.Source];
@@ -171,32 +171,33 @@ namespace LifxNet
 
 		}
 
-	/// <summary>
-	/// Disposes the client
-	/// </summary>
-	public void Dispose()
-	{
-		_isRunning = false;
-		
-		if (_socket != null)
+		/// <summary>
+		/// Disposes the client
+		/// </summary>
+		public void Dispose()
 		{
-			try
+			_isRunning = false;
+
+			if (_socket != null)
 			{
-				// UDP is connectionless, just close it directly
-				_socket.Close();
-			}
-			catch (Exception ex)
-			{
-				System.Diagnostics.Debug.WriteLine($"Error disposing socket: {ex.Message}");
-			}
-			finally
-			{
-				_socket.Dispose();
-				_socket = null;
+				try
+				{
+					// UDP is connectionless, just close it directly
+					_socket.Close();
+				}
+				catch (Exception ex)
+				{
+					System.Diagnostics.Debug.WriteLine($"Error disposing socket: {ex.Message}");
+				}
+				finally
+				{
+					_socket.Dispose();
+					_socket = null;
+				}
 			}
 		}
-	}		private Task<T> BroadcastMessageAsync<T>(string? hostName, FrameHeader header, MessageType type, params object[] args)
-						where T : LifxResponse
+		private Task<T> BroadcastMessageAsync<T>(string? hostName, FrameHeader header, MessageType type, params object[] args)
+							where T : LifxResponse
 
 		{
 			List<byte> payload = new List<byte>();

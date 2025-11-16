@@ -38,12 +38,11 @@ namespace LifxNet
 		/// </summary>
 		public event EventHandler<DeviceDiscoveryEventArgs>? DeviceLost;
 
-		private IList<Device> devices = new List<Device>();
 
 		/// <summary>
 		/// Gets a list of currently known devices
 		/// </summary>
-		public IEnumerable<Device> Devices { get { return devices; } }
+		public IEnumerable<Device> Devices { get { return DiscoveredBulbs.Values; } }
 
 		/// <summary>
 		/// Event args for <see cref="DeviceDiscovered"/> and <see cref="DeviceLost"/> events.
@@ -76,7 +75,6 @@ namespace LifxNet
 				LastSeen = DateTime.UtcNow
 			};
 			DiscoveredBulbs[id] = device;
-			devices.Add(device);
 			if (DeviceDiscovered != null)
 			{
 				DeviceDiscovered(this, new DeviceDiscoveryEventArgs(device));
@@ -99,7 +97,7 @@ namespace LifxNet
 				_DiscoverCancellationSource = new CancellationTokenSource();
 				token = _DiscoverCancellationSource.Token;
 			}
-			
+
 			var source = discoverSourceID = GetNextIdentifier();
 			//Start discovery thread
 			await Task.Run(async () =>
@@ -110,15 +108,15 @@ namespace LifxNet
 				do
 				{
 					await RefreshDevicesAsync();
-					await Task.Delay(1000); 
+					await Task.Delay(1000);
 				} while (retryRepeatedly && !token.IsCancellationRequested);
 			});
 		}
 
 		/// <summary>
-        /// A lightweight method to do an initial device discovery.
+		/// A lightweight method to do an initial device discovery.
 		/// No repeated discovery is done after this call.
-        /// </summary>
+		/// </summary>
 		public async Task DoInitialDeviceDiscovery()
 		{
 			await StartDeviceDiscovery(false);
@@ -143,12 +141,11 @@ namespace LifxNet
 			}
 			catch { }
 			await Task.Delay(1000); //wait a second for responses
-			var lostDevices = devices.Where(d => (DateTime.UtcNow - d.LastSeen).TotalMinutes > 5).ToArray();
+			var lostDevices = Devices.Where(d => (DateTime.UtcNow - d.LastSeen).TotalMinutes > 5).ToArray();
 			if (lostDevices.Any())
 			{
 				foreach (var device in lostDevices)
 				{
-					devices.Remove(device);
 					DiscoveredBulbs.Remove(device.MacAddressName, out _);
 					if (DeviceLost != null)
 						DeviceLost(this, new DeviceDiscoveryEventArgs(device));
@@ -159,12 +156,12 @@ namespace LifxNet
 		private async Task BroadcastMessageToAllSubnetsAsync(FrameHeader header)
 		{
 			if (_broadcastIPs.Count == 0 || !_broadCastIPsEnumerated)
-            {
+			{
 				foreach (var ip in GetSubnetBroadcastIPs())
 				{
 					_broadcastIPs[ip] = true;
 				}
-            }
+			}
 
 			foreach (var ip in _broadcastIPs.Keys)
 			{
@@ -175,19 +172,19 @@ namespace LifxNet
 					System.Diagnostics.Debug.WriteLine($"Finished broadcasting GetService to {ip}");
 				}
 				catch (Exception)
-                {
+				{
 					if (!_broadCastIPsEnumerated)
-                    {
-                        _broadcastIPs.TryRemove(ip, out _);
-                    }
+					{
+						_broadcastIPs.TryRemove(ip, out _);
+					}
 					continue;
 				}
 			}
 
 			if (_broadcastIPs.Count > 0)
-            {
-                _broadCastIPsEnumerated = true;
-            }
+			{
+				_broadCastIPsEnumerated = true;
+			}
 		}
 
 		private List<string> GetSubnetBroadcastIPs()
@@ -198,7 +195,7 @@ namespace LifxNet
 			try
 			{
 				var host = Dns.GetHostEntry(Dns.GetHostName());
-				
+
 
 				foreach (var ip in host.AddressList)
 				{
